@@ -1,0 +1,8 @@
+Plot Multi polygons - check cropping these correctly, try
+x, y = polygon.convex_hull.exterior.coords.xy
+
+Try clustering images
+
+Try classification without border reflection
+
+Try looking at correlation of country/region/xy and roof type
