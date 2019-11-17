@@ -58,4 +58,25 @@ TODO - combine all the augmented and different padded data for a simgle train an
 
 
 
+### Image clustering
+
+see https://github.com/rymc/n2d/tree/4b888b31bccf092032c8eac6e82feb06d5461e94
+
+installed under ../unsupervised/image_clustering/tensorflow/josephsdavid/N2D/
+
+use venv N2D
+n2d_clustering-train_valid.ipynb
+
+Can see differences bw train / val and test - particularly unverified
+
+GAN 
+
+see https://arxiv.org/pdf/1809.03627.pdf
+
+https://github.com/eriklindernoren/PyTorch-GAN#installation
+
+/mnt/963GB/Data/Python/Code/GAN/PyTorch-GAN/
+
+
+
 
