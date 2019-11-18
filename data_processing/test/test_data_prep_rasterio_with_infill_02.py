@@ -2,6 +2,7 @@ import unittest
 import numpy as np
 from PIL import Image
 import os,sys,inspect
+import matplotlib.pyplot as plt
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 from data_prep_rasterio_with_infill_02 import crop_TL, crop_BL, crop_TR, crop_BR, mask_TL, mask_BL, mask_TR, mask_BR
@@ -11,23 +12,46 @@ class TestCropPad(unittest.TestCase):
         print('>>test_crop_TL')
         height=16
         width=12
-        img=np.zeros((height, width, 3), dtype=np.uint8)
-        img = Image.fromarray(img)
+        i_np=np.zeros((height, width, 3), dtype=np.uint8)
+        plt.imshow(i_np, interpolation='nearest')
+        plt.title('--test_crop_TL i_np')
+        plt.axis('off')
+        plt.show(block=False)
+        img = Image.fromarray(i_np)
         img_TL=crop_TL(img, height, width)
         np_TL=np.array(img_TL)
+        plt.imshow(np_TL, interpolation='nearest')
+        plt.title('--test_crop_TL np_TL')
+        plt.axis('off')
+        plt.show(block=False)
         #size is width x height or x * y, while matrix ordering is rows x columns
         w, h = img_TL.size
         self.assertEqual(h, height)
         self.assertEqual(w, width)
-        self.assertEqual(np_TL.shape, (height, width, 3))
+        self.assertEqual(np_TL.shape, (height, width, 4))
 
     def test_mask_TL(self):
         print('>>test_mask_TL')
         height=16
         width=12
         shape_mask = np.zeros((height, width), dtype=bool)
-        shape_mask[0:12,0:8]=True
+        shape_mask[0:12,0:8]=1
+        shape_mask[shape_mask==0]=255
+        plt.imshow(shape_mask, interpolation='nearest')
+        plt.title('--test_mask_TL shape_mask')
+        plt.axis('off')
+        plt.show(block=False)
+
         m_TL = mask_TL(height, width, shape_mask)
+        plt.imshow(m_TL, interpolation='nearest')
+        plt.title('--test_mask_TL m_TL')
+        plt.axis('off')
+        plt.show(block=False)
+
+        pil_m_TL = Image.fromarray(m_TL, 'L')
+        pil_m_TL.show()
+
+
         #(3, 4, 12, 16)
         np.testing.assert_array_equal(m_TL[0:12-4, 0:8-3], shape_mask[4:12, 3:8])
         print(f'mask_TL: {m_TL}')
@@ -48,7 +72,7 @@ class TestCropPad(unittest.TestCase):
         w, h = img_BL.size
         self.assertEqual(h, height)
         self.assertEqual(w, width)
-        self.assertEqual(np_BL.shape, (height, width, 3))
+        self.assertEqual(np_BL.shape, (height, width, 4))
 
     def test_mask_BL(self):
         print('>>test_mask_BL')
@@ -73,7 +97,7 @@ class TestCropPad(unittest.TestCase):
         w, h = img_TR.size
         self.assertEqual(h, height)
         self.assertEqual(w, width)
-        self.assertEqual(np_TR.shape, (height, width, 3))
+        self.assertEqual(np_TR.shape, (height, width, 4))
         # (3, 4, 12, 16)
         #np.testing.assert_array_equal(mask_TR[0:12 - 4, 0:8 - 3], shape_mask[4:12, 3:8])
 
@@ -99,7 +123,7 @@ class TestCropPad(unittest.TestCase):
         w, h = img_BR.size
         self.assertEqual(h, height)
         self.assertEqual(w, width)
-        self.assertEqual(np_BR.shape, (height, width, 3))
+        self.assertEqual(np_BR.shape, (height, width, 4))
 
     def test_mask_BR(self):
         print('>>test_mask_BR')

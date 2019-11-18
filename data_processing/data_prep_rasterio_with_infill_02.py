@@ -16,7 +16,7 @@
 # !pip install git+https://github.com/CosmiQ/solaris/@dev
 
 import matplotlib
-matplotlib.rcParams['backend'] = "Qt4Agg"
+#matplotlib.rcParams['backend'] = "TkAgg"
 from os import listdir
 from os.path import isfile, join
 import time
@@ -59,10 +59,18 @@ import warnings
 if not sys.warnoptions:
     warnings.simplefilter("ignore")
 
+'''
+Spent a lot of time getting masks to work as outline for pasting, but ended up could paste with pillow using alpha 
+and not requiring masks, mask code superfluos
+
+Padding code takes original image, roates it , makes 4 copes, shifts to corners, uses as bg and puts origial over the top
+'''
+
 BUFFER = 0.1
-PAD = False
+PAD = True
 #if True then dont wite any files
 DEBUG = False
+SHOW_PLOTS=True
 
 d = Path().resolve().parent
 
@@ -114,6 +122,16 @@ def create_paths(country, region):
     rot_clipped_dir.mkdir(exist_ok=True)
     pad_clipped_dir = data_dir / f'{country}_{region}/cropped/train/rotated/clipped/padded'
     pad_clipped_dir.mkdir(exist_ok=True)
+
+def mpl_plot(np_img, fn, title, id):
+    if SHOW_PLOTS:
+        plt.imshow(np_img, interpolation='nearest')
+        plt.title(f'{fn} {title}')
+        plt.axis('off')
+        plt.show(block=False)
+        plt.close()
+    else:
+        pass
 
 def oddTuples(aTup):
     return aTup[0::2]
@@ -180,6 +198,16 @@ def prep_poly(poly):
     y = evenTuples(c)
     return x, y
 
+def to_rgb_to_np(np_in):
+    rgb_img = Image.fromarray(np_in).convert('RGB')
+    np_back = np.array(rgb_img)
+    return np_back
+
+def to_rgba_to_np(np_in):
+    rgba_img = Image.fromarray(np_in).convert('RGBA')
+    np_back = np.array(rgba_img)
+    return np_back
+
 def crop_TL(img, height, width):
     assert isinstance(height, int)
     assert isinstance(width, int)
@@ -203,20 +231,17 @@ def crop_TL(img, height, width):
 def mask_TL(height, width, shape_mask):
     assert isinstance(height, int)
     assert isinstance(width, int)
-
     upper = int(height / 4)
     left = int(width / 4)
+    c=3
     #create boolean index array
-    np_TL = np.zeros(shape=(height, width), dtype=bool)
-    mask_TL=shape_mask[upper:, left:]
+    np_TL = np.ones(shape=(height, width, c), dtype=np.uint8)
+    np_TL = np_TL * 255
+    mask_TL = shape_mask[upper:, left:, :]
+    #print(f'mask_TL: {mask_TL.shape}, np_TL: {np_TL.shape}')
     assert height-upper==mask_TL.shape[0]
     assert width-left == mask_TL.shape[1]
-    #mask_TL = np.repeat(mask_TL[:, :, np.newaxis], 3, axis=2)
-    np_TL[0:height-upper, 0:width-left]=mask_TL
-    i_TL = Image.fromarray(np_TL)
-    i_TL.show(title='i_TL')
-    i_shape_mask = Image.fromarray(shape_mask)
-    i_shape_mask.show(title='i_shape_mask')
+    np_TL[0:height-upper, 0:width-left, :]=mask_TL
     return np_TL
 
 def crop_BL(img, height, width):
@@ -236,9 +261,12 @@ def crop_BL(img, height, width):
 def mask_BL(height, width, shape_mask):
     upper = 0
     left = int(width / 4)
-    np_BL = np.zeros(shape=(height, width), dtype=bool)
-    mask_BL = shape_mask[0:, left:]
-    np_BL[upper:height, 0:width-left]=mask_BL
+    c = 3
+    np_BL = np.ones(shape=(height, width, c), dtype=np.uint8)
+    np_BL = np_BL * 255
+    mask_BL = shape_mask[upper:height-int(height / 4), left:, :]
+    #print(f'mask_BL: {mask_BL.shape}, np_BL: {np_BL.shape}')
+    np_BL[upper+int(height / 4):height, 0:width-left, :]=mask_BL
     return np_BL
 
 def crop_TR(img, height, width):
@@ -259,10 +287,13 @@ def crop_TR(img, height, width):
 def mask_TR(height, width, shape_mask):
     upper = int(height / 4)
     left = 0
+    c = 3
     # create boolean index array
-    np_TR = np.zeros(shape=(height, width), dtype=bool)
-    mask_TR = shape_mask[upper:, left:]
-    np_TR[0:height - upper, left:width] = mask_TR
+    np_TR = np.ones(shape=(height, width, c), dtype=np.uint8)
+    np_TR = np_TR * 255
+    mask_TR = shape_mask[upper:, left:width-int(width / 4), :]
+    #print(f'mask_TR: {mask_TR.shape}, np_TR: {np_TR.shape}')
+    np_TR[0:height - upper, left+int(width / 4):width, :] = mask_TR
     return np_TR
 
 def crop_BR(img, height, width):
@@ -282,9 +313,12 @@ def crop_BR(img, height, width):
 def mask_BR(height, width, shape_mask):
     upper = 0
     left = 0
-    np_BR = np.zeros(shape=(height, width), dtype=bool)
-    mask_BR = shape_mask[upper:, left:]
-    np_BR[upper:height - upper, 0:width] = mask_BR
+    c = 3
+    np_BR = np.ones(shape=(height, width, c), dtype=np.uint8)
+    np_BR = np_BR * 255
+    mask_BR = shape_mask[upper:height-int(height / 4), left:width-int(width / 4), :]
+    #print(f'mask_BR: {mask_BR.shape}, np_BR: {np_BR.shape}')
+    np_BR[upper+int(height / 4):height, int(width / 4):width, :] = mask_BR
     return np_BR
 
 def crop_about_c(img_np, mask_np, country, region, tt_path, id):
@@ -295,48 +329,22 @@ def crop_about_c(img_np, mask_np, country, region, tt_path, id):
     assert img_np.shape[0]==mask_np.shape[0]
     assert img_np.shape[1] == mask_np.shape[1]
     assert img_np.shape[2] == 4
-    # greyscale
-    assert len(mask_np.shape) == 2
+    # RGB
+    assert mask_np.shape[2] == 3
     height = img_np.shape[0]
     width = img_np.shape[1]
 
-    img = Image.fromarray(img_np)
+    img = Image.fromarray(img_np, 'RGBA')
     img_TL = crop_TL(img, height, width)
     img_BL = crop_BL(img, height, width)
     img_TR = crop_TR(img, height, width)
     img_BR = crop_BR(img, height, width)
 
     np_TL = mask_TL(height, width, mask_np)
-    np_TL_image = Image.fromarray(np_TL)
-    np_BL = mask_BL(height, width, mask_np)
-    np_BL_image = Image.fromarray(np_BL)
-    np_TR = mask_TR(height, width, mask_np)
-    np_TR_image = Image.fromarray(np_TR)
-    np_BR = mask_BR(height, width, mask_np)
-    np_BR_image = Image.fromarray(np_BR)
 
-    # for debugging, plots
-    out_temp = data_dir / f'{country}_{region}/cropped/{tt_path}/rotated/debug_crop'
-    out_temp.mkdir(exist_ok=True)
-    img_TL.save(out_temp / f'{id}_TL.tif')
-    img_BL.save(out_temp / f'{id}_BL.tif')
-    img_TR.save(out_temp / f'{id}_TR.tif')
-    img_BR.save(out_temp / f'{id}_BR.tif')
-    print(f'id: {id} mask_np.shape: {mask_np.shape}')
-    mask_np_rgb = np.repeat(mask_np[:, :, np.newaxis], 3, axis=2)
-    print(f'id: {id} mask_np_rgb.shape: {mask_np_rgb.shape}')
-    mask_image = Image.fromarray(mask_np)
-    #mask_np_rgb = Image.fromarray(mask_np_rgb)
-    #print(f'shape_mask_image.size: {mask_image.size}')
-    mask_image.save(out_temp / f'{id}_shape_mask.tif')
-    mask_image.show()
-    #mask_np_rgb.save(out_temp / f'{id}_shape_mask_rgb.tif')
-    np_TL_image.save(out_temp / f'{id}_mask_TL.tif')
-    np_BL_image.save(out_temp / f'{id}_mask_BL.tif')
-    np_TR_image.save(out_temp / f'{id}_mask_TR.tif')
-    np_BR_image.save(out_temp / f'{id}_mask_BR.tif')
-    assert True == False
-    # end debug
+    np_BL = mask_BL(height, width, mask_np)
+    np_TR = mask_TR(height, width, mask_np)
+    np_BR = mask_BR(height, width, mask_np)
 
     repeated_images = [img_TL,img_BL,img_TR,img_BR]
     repeated_masks = [np_TL, np_BL, np_TR, np_BR]
@@ -366,27 +374,22 @@ def combine_background(img_list, msk_list, std_np, mask_np):
     img_TR=np.array(img_list[2])
     img_BR=np.array(img_list[3])
 
-    np_TL = np.array(msk_list[0])
-    #repeat for other channels so can bcast together
-    np_TL = np.repeat(np_TL[:, :, np.newaxis], 4, axis=2)
-    np_BL = np.array(msk_list[1])
-    np_BL = np.repeat(np_BL[:, :, np.newaxis], 4, axis=2)
-    np_TR = np.array(msk_list[2])
-    np_TR = np.repeat(np_TR[:, :, np.newaxis], 4, axis=2)
-    np_BR = np.array(msk_list[3])
-    np_BR = np.repeat(np_BR[:, :, np.newaxis], 4, axis=2)
-    dst = np.where(np_TL==1, img_TL, img_BL)
-    dst = np.where(np_BL == 1, img_BL, dst)
-    dst = np.where(np_TR == 1, img_TR, dst)
-    dst = np.where(np_BR == 1, img_BR, dst)
-    #if ch==4: std_img=std_img[:,:,:3]
-    #if dst.shape[2]==4: dst=dst[:,:,:3]
-    #post image over bg just created
-    mask = np.repeat(mask_np[:, :, np.newaxis], 4, axis=2)
-    assert mask.shape==dst.shape
-    assert std_np.shape==dst.shape
-    dst = np.where(mask == 0, std_np, dst)
-    return dst
+    std_img = Image.fromarray(std_np).convert('RGBA')
+    rgba_TL = Image.fromarray(img_TL).convert('RGBA')
+    rgba_BL = Image.fromarray(img_BL).convert('RGBA')
+    rgba_TR = Image.fromarray(img_TR).convert('RGBA')
+    rgba_BR = Image.fromarray(img_BR).convert('RGBA')
+    img_pad = Image.new('RGBA', (col, row), 0)
+    position = (0, 0)
+    # print(f'position: {position}')
+    img_pad.paste(rgba_TL, position)
+    img_pad.paste(rgba_BL, position, rgba_BL)
+    img_pad.paste(rgba_TR, position, rgba_TR)
+    img_pad.paste(rgba_BR, position, rgba_BR)
+    # put main image back over the top
+    img_pad.paste(std_img, position, std_img)
+    #img_pad.show()
+    return img_pad
 
 def rasterio_mask(dataset, shapes, all_touched=False, invert=False, nodata=None,
          filled=True, crop=False, pad=False, pad_width=0.5, indexes=None):
@@ -421,8 +424,9 @@ def rasterio_mask(dataset, shapes, all_touched=False, invert=False, nodata=None,
     x_im = np.ma.transpose(xi, [1, 2, 0])
     x_im = x_im[:, :, 0]
     x_im = x_im*255
-    x_img = Image.fromarray(x_im)
-    #x_img.show(title='x_img')
+    #addding a value of 1 for actual roof instead of zero - see rotation
+    x_im[x_im == 0] = 1
+    x_img = Image.fromarray(x_im).convert('RGB')
 
     if filled:
         out_image = out_image.filled(nodata)
@@ -451,9 +455,6 @@ def mask_raster(df, tif_filename, country, region, tt_path, buffer=2, debug=Fals
                              "width": out_np.shape[2],
                              "transform": out_transform})
 
-            #pad_path = data_dir / f'{country}_{region}/cropped/{tt_path}/padded'
-            #pad_path.mkdir(exist_ok=True)
-            #path_out = data_dir / f'{country}_{region}/cropped/{tt_path}/padded/{id}.tif'
             path_out = data_dir / f'{country}_{region}/cropped/{tt_path}/{id}.tif'
             if not debug:
                 with rasterio.open(path_out, "w", **out_meta) as dest:
@@ -461,33 +462,47 @@ def mask_raster(df, tif_filename, country, region, tt_path, buffer=2, debug=Fals
 
             # rotate before padding
             # (but can't rotate image before rasterio mask above as image is 5GB)
+            #msk_save_pth = data_dir / f'{country}_{region}/cropped/{tt_path}/rotated/{id}_mask.tif'
+            #mask_img.save(msk_save_pth)
             std_np=reshape_as_image(out_np)
-            std_img = Image.fromarray(std_np)
+            std_img = Image.fromarray(std_np, 'RGBA')
             std_img = std_img.rotate(theta * -1)
             # has RGBA channels
             std_np = np.array(std_img)
             mask_img = mask_img.rotate(theta * -1)
-            #x_img = Image.fromarray(x_im)
-            mask_img.show(title='mask_img')
-            # just L channel
+            mask_img_90 = mask_img.rotate(90)
+
+
+            # mask has just L channel
+            # when rotated puts 0 in blank areas - fill these with non-image 255
+            # ie image after rotate and replace: 255==non roof, 1==roof
+            mask_np_90 = np.array(mask_img_90)
             mask_np = np.array(mask_img)
+            mask_np[mask_np == 0] = 255
+            mask_np_90[mask_np_90 == 0] = 255
 
             # create 4x4 background
             repeated_images, repeated_masks = crop_about_c(std_np, mask_np, country, region, tt_path, id)
             rotated = combine_background(repeated_images, repeated_masks, std_np, mask_np)
-            rotated = Image.fromarray(rotated)
 
             if PAD:
-                pad_path = data_dir / f'{country}_{region}/cropped/{tt_path}/rotated/bg_padded'
+                pad_path = data_dir/f'{country}_{region}/cropped/{tt_path}/rotated/bg_padded'
                 pad_path.mkdir(exist_ok=True)
-                pad_rot_out = data_dir / f'{country}_{region}/cropped/{tt_path}/rotated/bg_padded/{id}.tif'
-                rot_out = data_dir / f'{country}_{region}/cropped/{tt_path}/rotated/{id}.tif'
+                mask_path = data_dir/f'{country}_{region}/cropped/{tt_path}/rotated/bg_padded/mask'
+                mask_path.mkdir(exist_ok=True)
+                pad_rot_out = data_dir/f'{country}_{region}/cropped/{tt_path}/rotated/bg_padded/{id}.tif'
+                rot_out = data_dir/f'{country}_{region}/cropped/{tt_path}/rotated/{id}.tif'
+                np_mask_out = mask_path/f'{id}_mask'
                 if not debug:
-                    #save both padded bg and original rotated image for later use
+                    #save padded bg, original rotated image and npy mask (cant workout how to savas as propper image) for later use
                     rotated.save(pad_rot_out)
                     std_img.save(rot_out)
+                    #np.save(np_mask_out, mask_np)
+                    #mask_np_test=np.load(np_mask_out+'.npy')
+                    #mask_img_test = Image.fromarray(mask_np)
+                    #mask_img_test.show(title='mask_img_test')
             else:
-                rot_out = data_dir / f'{country}_{region}/cropped/{tt_path}/rotated/{id}.tif'
+                rot_out = data_dir/f'{country}_{region}/cropped/{tt_path}/rotated/{id}.tif'
                 if not debug:
                     rotated.save(rot_out)
 
@@ -513,8 +528,8 @@ def crop_inc_pad_non_transparent(dir, pad_out_path, bg_pad_dir):
         id=f.split('/')[-1].split('.tif')[0]
         crop_d[id]=[miny, maxy, minx, maxx]
     for f in padfiles:
-        assert (os.path.isfile(dir / f'{f}'))
-        im = cv2.imread(str(dir / f'{f}'), cv2.IMREAD_UNCHANGED)
+        assert (os.path.isfile(bg_pad_dir / f'{f}'))
+        im = cv2.imread(str(bg_pad_dir / f'{f}'), cv2.IMREAD_UNCHANGED)
         id=f.split('/')[-1].split('.tif')[0]
         coord_list=crop_d[id]
         cropImg = im[coord_list[0]:coord_list[1], coord_list[2]:coord_list[3]]
@@ -596,11 +611,15 @@ def workflow():
             test_out_path = data_dir / f'{country}_{region}/{clip_test_postfix}'
             if PAD:
                 bg_pad_dir = dir/'bg_padded'
+                bg_pad_dir.mkdir(exist_ok=True)
                 test_pad_dir = test_dir / 'bg_padded'
-                pad_out_path = dir/'padded'
+                pad_out_path = out_path/'padded'
+                pad_out_path.mkdir(exist_ok=True)
                 test_pad_out_path = test_out_path/'padded'
                 crop_inc_pad_non_transparent(dir, pad_out_path, bg_pad_dir)
                 if test_exists:
+                    test_pad_dir.mkdir(exist_ok=True)
+                    test_pad_out_path.mkdir(exist_ok=True)
                     crop_inc_pad_non_transparent(test_dir, test_pad_out_path, test_pad_dir)
             else:
                 crop_non_transparent(dir, out_path)
