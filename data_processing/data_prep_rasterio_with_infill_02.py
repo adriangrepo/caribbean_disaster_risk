@@ -30,6 +30,7 @@ import os
 import sys
 import decimal
 from shapely.geometry import shape
+import shapely
 import skimage
 from tqdm import tqdm
 import pandas as pd
@@ -67,15 +68,17 @@ Padding code takes original image, roates it , makes 4 copes, shifts to corners,
 '''
 
 BUFFER = 0.1
-PAD = True
+PAD = False
 #if True then dont wite any files
-DEBUG = False
-SHOW_PLOTS=True
+DEBUG = True
+SHOW_PLOTS=False
+SAVE_CENTROIDS=True
 
 d = Path().resolve().parent
 
 #data_src = 'data'
 data_src = 'data_02'
+data_orig = 'data'
 
 colombia_rural = Path(d/f'{data_src}/stac/colombia/borde_rural')
 colombia_soacha = Path(d/f'{data_src}/stac/colombia/borde_soacha')
@@ -321,16 +324,17 @@ def mask_BR(height, width, shape_mask):
     np_BR[upper+int(height / 4):height, int(width / 4):width, :] = mask_BR
     return np_BR
 
-def crop_about_c(img_np, mask_np, country, region, tt_path, id):
+def crop_about_c(img_np, country, region, tt_path, id):
     ''' Shift original image by 1/4 image h and w in 4 directions with crop and pad for each
     Ditto for original image mask
     Combine all where mask=true keep to create rich background
-    Paste original image over the top of bg.'''
-    assert img_np.shape[0]==mask_np.shape[0]
-    assert img_np.shape[1] == mask_np.shape[1]
+    Paste original image over the top of bg.
+    Not using masks'''
+    #assert img_np.shape[0]==mask_np.shape[0]
+    #assert img_np.shape[1] == mask_np.shape[1]
     assert img_np.shape[2] == 4
     # RGB
-    assert mask_np.shape[2] == 3
+    #assert mask_np.shape[2] == 3
     height = img_np.shape[0]
     width = img_np.shape[1]
 
@@ -340,15 +344,14 @@ def crop_about_c(img_np, mask_np, country, region, tt_path, id):
     img_TR = crop_TR(img, height, width)
     img_BR = crop_BR(img, height, width)
 
-    np_TL = mask_TL(height, width, mask_np)
-
-    np_BL = mask_BL(height, width, mask_np)
-    np_TR = mask_TR(height, width, mask_np)
-    np_BR = mask_BR(height, width, mask_np)
+    #np_TL = mask_TL(height, width, mask_np)
+    #np_BL = mask_BL(height, width, mask_np)
+    #np_TR = mask_TR(height, width, mask_np)
+    #np_BR = mask_BR(height, width, mask_np)
 
     repeated_images = [img_TL,img_BL,img_TR,img_BR]
-    repeated_masks = [np_TL, np_BL, np_TR, np_BR]
-    return repeated_images, repeated_masks
+    #repeated_masks = [np_TL, np_BL, np_TR, np_BR]
+    return repeated_images
 
 def raster_pts(img, p):
     '''get points inside polygon
@@ -358,16 +361,17 @@ def raster_pts(img, p):
     idx = p.index.values[-1]
     xmin, ymin, xmax, ymax = p[idx].bounds
     points = MultiPoint(list(product(range(img.shape[2]), range(img.shape[1]))))
-    print(f'{idx},{xmin},{ymin},{xmax},{ymax},{img.shape[2]},{img.shape[1]}')
+    #print(f'{idx},{xmin},{ymin},{xmax},{ymax},{img.shape[2]},{img.shape[1]}')
     result = points.intersection(p[idx])
     return result
 
-def combine_background(img_list, msk_list, std_np, mask_np):
+def combine_background(img_list, std_np):
     # Put logo in ROI and modify the main image
     '''see https://docs.opencv.org/trunk/d0/d86/tutorial_py_image_arithmetics.html
-    img_TL,img_BL,img_TR,img_BR, np_TL, np_BL, np_TR, np_BR'''
+    img_TL,img_BL,img_TR,img_BR, np_TL, np_BL, np_TR, np_BR
+    Note we dont need masks'''
     assert isinstance(std_np, np.ndarray)
-    assert isinstance(mask_np, np.ndarray)
+
     row, col, ch = std_np.shape
     img_TL=np.array(img_list[0])
     img_BL=np.array(img_list[1])
@@ -415,8 +419,10 @@ def rasterio_mask(dataset, shapes, all_touched=False, invert=False, nodata=None,
         window=window, out_shape=out_shape, masked=True, indexes=indexes)
 
     out_image.mask = out_image.mask | shape_mask
-    out_mask=out_image.mask.copy()
 
+    '''
+    #We dont need to return mask image anymore
+    out_mask=out_image.mask.copy()
     #convert mask into a valid 3 channel image, 0 for roof, bg 255
     copy_image=out_image.copy()
     x=np.ma.getmaskarray(copy_image)
@@ -427,16 +433,75 @@ def rasterio_mask(dataset, shapes, all_touched=False, invert=False, nodata=None,
     #addding a value of 1 for actual roof instead of zero - see rotation
     x_im[x_im == 0] = 1
     x_img = Image.fromarray(x_im).convert('RGB')
+    '''
 
     if filled:
         out_image = out_image.filled(nodata)
 
-    return out_image, transform, x_img
+    return out_image, transform
+
+def get_info_from_polygon(polygon):
+    xy = []
+    if isinstance(polygon, shapely.geometry.Polygon):
+        x = polygon.centroid.x
+        y = polygon.centroid.y
+        xy = (x, y)
+        area = polygon.area
+    elif isinstance(polygon, gpd.GeoSeries):
+        try:
+            vp = polygon.centroid.values
+            if len(vp) == 0:
+                return xy
+            if len(vp)==1:
+                x=vp[0].x
+                y=vp[0].y
+                xy=[x,y]
+            else:
+                x=vp[-1].x
+                y=vp[-1].y
+                xy = (x, y)
+        except AttributeError as e:
+            print(f'Error, not polygon.centroid.values')
+        try:
+            if len(polygon)==0:
+                area = 0
+            #if len(polygon)==1:
+            #    area = polygon[0].area
+            else:
+                idxs=polygon.index.tolist()
+                area = polygon[idxs[-1]].area
+        except KeyError as e:
+            print(e)
+    else:
+        print(f'Error, unknown type: {type(polygon)}')
+    return xy, area
+
+def save_centroids(poly_centroids, poly_areas, poly_bounds, country, region, tt_path):
+    print(f'save_centroids  centroids: {len(poly_centroids)} areas: {len(poly_areas)} bounds: {len(poly_bounds)}')
+    col_names = ['id', 'centroid', 'area']
+    df_data = pd.DataFrame(columns=col_names)
+    df_data['id']=poly_centroids.keys()
+    df_data['centroid'] = poly_centroids.values()
+    df_data['area'] = poly_areas.values()
+    #df_data['bbox']=poly_bounds.values()
+    '''TODO convert these vales to format that can save
+    dict_values([            minx           miny           maxx           maxy
+0  593322.014631  503542.106432  593331.550536  503555.329639,             minx           miny           maxx           maxy
+1  593314.707898  503544.685727  593324.739175  503557.208689,            minx           miny           maxx           maxy'''
+
+    df_coord = pd.DataFrame(df_data)
+    print(df_coord.head())
+    df_name=Path(d/f'data/df_{country}_{region}_{tt_path}_centroids.csv')
+    df_coord.to_csv(str(df_name), index = False)
+    print(f'saved centroids, areas to df_{country}_{region}_{tt_path}_centroids.csv')
 
 def mask_raster(df, tif_filename, country, region, tt_path, buffer=2, debug=False):
     angles={}
     multi_ids=[]
     areas_list=[]
+    poly_centroids={}
+    poly_areas={}
+    poly_bounds={}
     with rasterio.open(tif_filename) as src:
         for index, row in df.iterrows():
             id = row["id"]
@@ -446,9 +511,14 @@ def mask_raster(df, tif_filename, country, region, tt_path, buffer=2, debug=Fals
                 multi_ids.append(id)
                 areas_list.append(area)
             angles[id]=theta
-            poly = poly.buffer(distance=buffer, cap_style=2, join_style=2)
 
-            out_np, out_transform, mask_img= rasterio_mask(src, poly, crop=True)
+            poly = poly.buffer(distance=buffer, cap_style=2, join_style=2)
+            xy_l, area=get_info_from_polygon(polygon)
+            poly_bounds[id]=polygon.bounds
+            poly_centroids[id]=" ".join([str(i) for i in xy_l])
+            poly_areas[id]=area
+
+            out_np, out_transform = rasterio_mask(src, poly, crop=True)
             out_meta = src.meta
             out_meta.update({"driver": "GTiff",
                              "height": out_np.shape[1],
@@ -462,52 +532,70 @@ def mask_raster(df, tif_filename, country, region, tt_path, buffer=2, debug=Fals
 
             # rotate before padding
             # (but can't rotate image before rasterio mask above as image is 5GB)
-            #msk_save_pth = data_dir / f'{country}_{region}/cropped/{tt_path}/rotated/{id}_mask.tif'
-            #mask_img.save(msk_save_pth)
             std_np=reshape_as_image(out_np)
             std_img = Image.fromarray(std_np, 'RGBA')
-            std_img = std_img.rotate(theta * -1)
+            std_img = std_img.rotate(theta * -1, resample=Image.BICUBIC, expand=True)
+            std_img_90 = std_img.rotate(90, resample=Image.BICUBIC, expand=True)
             # has RGBA channels
             std_np = np.array(std_img)
-            mask_img = mask_img.rotate(theta * -1)
-            mask_img_90 = mask_img.rotate(90)
+            std_np_90 = np.array(std_img_90)
 
-
+            #Not using masks anymore, not required
+            #mask_img = mask_img.rotate(theta * -1, resample=Image.BICUBIC, expand=True)
+            #mask_img_90 = mask_img.rotate(90, resample=Image.BICUBIC, expand=True)
             # mask has just L channel
             # when rotated puts 0 in blank areas - fill these with non-image 255
             # ie image after rotate and replace: 255==non roof, 1==roof
-            mask_np_90 = np.array(mask_img_90)
-            mask_np = np.array(mask_img)
-            mask_np[mask_np == 0] = 255
-            mask_np_90[mask_np_90 == 0] = 255
+            #mask_np_90 = np.array(mask_img_90)
+            #mask_np = np.array(mask_img)
+            #mask_np[mask_np == 0] = 255
+            #mask_np_90[mask_np_90 == 0] = 255
 
             # create 4x4 background
-            repeated_images, repeated_masks = crop_about_c(std_np, mask_np, country, region, tt_path, id)
-            rotated = combine_background(repeated_images, repeated_masks, std_np, mask_np)
+            repeated_images = crop_about_c(std_np, country, region, tt_path, id)
+            rotated = combine_background(repeated_images, std_np)
+
+            repeated_images_90 = crop_about_c(std_np_90, country, region, tt_path, id)
+            rotated_90 = combine_background(repeated_images_90, std_np_90)
 
             if PAD:
                 pad_path = data_dir/f'{country}_{region}/cropped/{tt_path}/rotated/bg_padded'
                 pad_path.mkdir(exist_ok=True)
-                mask_path = data_dir/f'{country}_{region}/cropped/{tt_path}/rotated/bg_padded/mask'
-                mask_path.mkdir(exist_ok=True)
+                pad_path = data_dir / f'{country}_{region}/cropped/{tt_path}/rotated/padded'
+                pad_path.mkdir(exist_ok=True)
+                #mask_path = data_dir/f'{country}_{region}/cropped/{tt_path}/rotated/bg_padded/mask'
+                #mask_path.mkdir(exist_ok=True)
                 pad_rot_out = data_dir/f'{country}_{region}/cropped/{tt_path}/rotated/bg_padded/{id}.tif'
+                pad_rot_out_90 = data_dir / f'{country}_{region}/cropped/{tt_path}/rotated/bg_padded/{id}_rot90.tif'
                 rot_out = data_dir/f'{country}_{region}/cropped/{tt_path}/rotated/{id}.tif'
-                np_mask_out = mask_path/f'{id}_mask'
+                rot_out_90 = data_dir / f'{country}_{region}/cropped/{tt_path}/rotated/{id}_rot90.tif'
+                #np_mask_out = mask_path/f'{id}_mask'
                 if not debug:
                     #save padded bg, original rotated image and npy mask (cant workout how to savas as propper image) for later use
                     rotated.save(pad_rot_out)
                     std_img.save(rot_out)
+                    rotated_90.save(pad_rot_out_90)
+                    std_img_90.save(rot_out_90)
                     #np.save(np_mask_out, mask_np)
                     #mask_np_test=np.load(np_mask_out+'.npy')
                     #mask_img_test = Image.fromarray(mask_np)
                     #mask_img_test.show(title='mask_img_test')
+                    if index % 1000 == 0:
+                        print(f'saved {pad_rot_out} {rot_out}')
             else:
-                rot_out = data_dir/f'{country}_{region}/cropped/{tt_path}/rotated/{id}.tif'
+                rot_out = data_dir / f'{country}_{region}/cropped/{tt_path}/rotated/{id}.tif'
+                rot_out_90 = data_dir / f'{country}_{region}/cropped/{tt_path}/rotated/{id}_rot90.tif'
                 if not debug:
                     rotated.save(rot_out)
+                    rotated_90.save(rot_out_90)
+                    if index % 1000 == 0:
+                        print(f'saved {rot_out_90} {rot_out}')
 
         if debug and len(multi_ids)>0:
             print(f'multi_ids country: {country}, region: {region}, count: {len(multi_ids)}, ids: {multi_ids}, areas: {areas_list}')
+
+    if SAVE_CENTROIDS:
+        save_centroids(poly_centroids, poly_areas, poly_bounds, country, region, tt_path)
 
 def crop_inc_pad_non_transparent(dir, pad_out_path, bg_pad_dir):
     '''crops tranparent areas outside of the roof
@@ -531,9 +619,11 @@ def crop_inc_pad_non_transparent(dir, pad_out_path, bg_pad_dir):
         assert (os.path.isfile(bg_pad_dir / f'{f}'))
         im = cv2.imread(str(bg_pad_dir / f'{f}'), cv2.IMREAD_UNCHANGED)
         id=f.split('/')[-1].split('.tif')[0]
-        coord_list=crop_d[id]
-        cropImg = im[coord_list[0]:coord_list[1], coord_list[2]:coord_list[3]]
-        cv2.imwrite(str(pad_out_path/f'{f}'), cropImg)
+        #total hack to handle errant id's that should have been deleted
+        if not id.endswith('_90'):
+            coord_list=crop_d[id]
+            cropImg = im[coord_list[0]:coord_list[1], coord_list[2]:coord_list[3]]
+            cv2.imwrite(str(pad_out_path/f'{f}'), cropImg)
 
 def crop_non_transparent(dir, out_path):
     '''crops tranparent areas outside of the roof'''
@@ -625,6 +715,7 @@ def workflow():
                 crop_non_transparent(dir, out_path)
                 if test_exists:
                     crop_non_transparent(test_dir, test_out_path)
+
         end = time.time()
         print(f'elapsed: {end-start}')
 
