@@ -13,4 +13,4 @@ def removeComments(inputFileName, outputFileName):
     output.close()
 
 if __name__ == "__main__":
-    removeComments('01_data_prep_rasterio.py','01_data_prep_rasterio_clean.py')
+    removeComments('03_28_resnet50_bgconst_valid_pewter_mixup_20191030.py','03_28_resnet50_bgconst_valid_pewter_mixup_20191030_clean.py')
