@@ -5,4 +5,7 @@
 /fastai
 /catalyst
 /zanzibar-aerial-mapping
+*.png
+*.xlsx
+*.csv
 
